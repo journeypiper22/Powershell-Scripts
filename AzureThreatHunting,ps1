@@ -1,0 +1,86 @@
+param (
+    [string]$AppName,       # Application name to filter logs
+    [string]$OS,            # Operating system to filter logs (e.g., Windows, Linux, MacOS)
+    [string]$Browser,       # Browser to filter logs (e.g., Chrome, Firefox, Edge)
+    [int]$TimeInMinutes,    # Time range in minutes to filter logs
+    [string]$IPAddress,     # IP Address to filter logs
+    [string]$Location       # Location to filter logs (optional)
+)
+Clear-Host
+Write-Host "`n`n
+    =========================================" -ForegroundColor Gray
+Write-Host "              Azure Sign-in Logs" -ForegroundColor White
+Write-Host "                Threat Hunting" -ForegroundColor DarkMagenta
+Write-Host "    =========================================`n`n" -ForegroundColor Gray
+
+Write-Host "Filter Sign-In Logs By: `n" -ForegroundColor Gray
+Write-Host "Application, OS, Browser, & IP Address; With the option to " -ForegroundColor Gray -NoNewline
+Write-Host "EXCLUDE " -ForegroundColor Red -NoNewline
+Write-Host "a location" -ForegroundColor gray
+Write-Host "`nNote:" -ForegroundColor Red -NoNewline
+Write-Host "` This is case sensitive!(Application names must match exactly)" -ForegroundColor Gray
+Write-Host "`n"
+Write-Host "-------------------------------------------------------------------------`n`n" -ForegroundColor White
+
+
+# Prompt user for input
+$AppName = Read-Host "Enter the Application Name (leave blank to ignore)"
+$OS = Read-Host "Enter the Operating System (leave blank to ignore)"
+$Browser = Read-Host "Enter the Browser (leave blank to ignore)"
+$IPAddress = Read-Host "Enter the IP Address (leave blank to ignore)"
+$Location = Read-Host "Enter the Location to EXCLUDE (leave blank to ignore)"
+$TimeInMinutes = Read-Host "Enter the time range in minutes (leave blank for default 30 min)"
+
+# Use default time range if input is blank
+if (-not $TimeInMinutes) { $TimeInMinutes = 30 }
+
+# Authenticate using Microsoft Graph
+if (-not (Get-MgContext)) {
+    Connect-MgGraph -Scopes "AuditLog.Read.All"
+}
+
+# Calculate the start time based on user input
+$lastDay = (Get-Date).AddMinutes(-$TimeInMinutes).ToString("o")
+
+# Initialize an array for dynamic filter conditions
+$filterConditions = @()
+
+# Add conditions dynamically if the user provided input
+if ($AppName) { $filterConditions += "(appDisplayName eq '$AppName')" }
+if ($OS) { $filterConditions += "(deviceDetail/operatingSystem eq '$OS')" }
+if ($Browser) { $filterConditions += "(deviceDetail/browser eq '$Browser')" }
+if ($IPAddress) { $filterConditions += "(IPAddress eq '$IPAddress')" }
+if ($Location) { $filterConditions += "(location/state ne '$Location')" }
+
+# Always include time filter
+$filterConditions += "(createdDateTime ge $lastDay)"
+
+# Combine filter conditions into a single query
+$filterQuery = $filterConditions -join " and "
+
+# Retrieve logs using the filter query
+$results = Get-MgAuditLogSignIn -Filter $filterQuery
+
+# Display filtered and sorted results
+$results | Select-Object @{Name="DateTime (CST)";Expression={($_.createdDateTime).ToUniversalTime().AddHours(-6).ToString('yyyy-MM-dd HH:mm:ss')}}, userPrincipalName, appDisplayName, @{Name="City";Expression={$_.location.city}}, @{Name="State";Expression={$_.location.state}}, IPAddress, ConditionalAccessStatus
+
+# Check if there are any results
+if ($results.Count -gt 0) {
+    $exportChoice = Read-Host "Would you like to export the results to a CSV file? (Y/N)"
+    
+    if ($exportChoice -eq 'Y' -or $exportChoice -eq 'y') {
+        # Get the current date to append to the file name
+        $currentDate = (Get-Date).ToString("yyyy-MM-dd")
+        
+        # Set the file path to the current path with the desired name
+        $filePath = ".\ThreatHuntingResults_$currentDate.csv"
+        
+        # Export the results to CSV
+        $results | Select-Object @{Name="DateTime (CST)";Expression={($_.createdDateTime).ToUniversalTime().AddHours(-6).ToString('yyyy-MM-dd HH:mm:ss')}}, userPrincipalName, appDisplayName, @{Name="City";Expression={$_.location.city}}, @{Name="State";Expression={$_.location.state}}, IPAddress, ConditionalAccessStatus | Export-Csv -Path $filePath -NoTypeInformation
+        Write-Host "Results exported successfully to $filePath"
+    } else {
+        Write-Host "**********Results not exported.**********" -ForegroundColor red
+    }
+} else {
+    Write-Host "**********No results found.**********" -ForegroundColor red
+}
