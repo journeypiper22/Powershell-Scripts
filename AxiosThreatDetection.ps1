@@ -94,15 +94,27 @@ Write-Output "Connected to Microsoft Graph."
 $query = @"
 EntraIdSignInEvents
 | where Timestamp >= ago(12h)
-| where UserAgent has 'axios' and ResourceDisplayName has 'OfficeHome'
-| where ConditionalAccessStatus != '0' and ErrorCode != '50126'
+| where UserAgent has "axios" 
+  and ResourceDisplayName has "OfficeHome"
+| where 
+    (
+        ConditionalAccessStatus != "0"
+        and ErrorCode != "50126"
+    )
+    or
+    (
+        ConditionalAccessStatus == "0"
+        and ErrorCode == "0"
+    )
 | project
     Timestamp,
     AccountUpn,
     IPAddress,
     ConditionalAccessStatus,
+    ErrorCode,
     ResourceDisplayName
-| sort by Timestamp
+| sort by Timestamp desc
+
 "@
 
 # ============================
